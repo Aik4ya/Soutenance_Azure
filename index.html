@@ -1,97 +1,240 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
-  <meta charset="UTF-8" />
+  <meta charset="UTF-8">
   <title>Messagerie Azure</title>
   <style>
     body { font-family: sans-serif; max-width: 600px; margin: auto; padding: 2em; }
     textarea { width: 100%; height: 60px; }
     ul { list-style: none; padding: 0; }
     li { margin-bottom: 0.5em; border-bottom: 1px solid #ddd; padding-bottom: 0.5em; }
+    button { cursor: pointer; padding: 5px 10px; margin: 5px 0; }
+    #messagesList { max-height: 400px; overflow-y: auto; }
+    .error { color: red; margin: 10px 0; padding: 5px; border: 1px solid red; background: #ffeeee; display: none; }
+    .status { color: green; margin: 10px 0; padding: 5px; border: 1px solid green; background: #eeffee; display: none; }
   </style>
 </head>
 <body>
   <h1>🟦 API de Messagerie</h1>
+  <div id="statusMessage" class="status"></div>
+  <div id="errorMessage" class="error"></div>
 
   <div id="login">
-    <input id="username" placeholder="Nom d'utilisateur" />
+    <input id="username" placeholder="Nom d'utilisateur">
     <button onclick="login()">Se connecter</button>
   </div>
 
   <div id="app" style="display: none;">
     <p>Connecté en tant que <b id="currentUser"></b> <button onclick="logout()">Déconnexion</button></p>
 
-    <textarea id="messageText" placeholder="Ton message..."></textarea><br />
+    <textarea id="messageText" placeholder="Ton message..."></textarea><br>
     <button onclick="sendMessage()">Envoyer</button>
 
     <h2>💬 Messages</h2>
     <ul id="messagesList"></ul>
+    <div id="loadingMessages" style="display: none;">Chargement des messages...</div>
   </div>
 
-  <script>
-    const API = 'https://monbackendapppython.azurewebsites.net/';
+  <script>    const API = 'https://monbackendapppython.azurewebsites.net';
+    let messageRefreshInterval;
+    let currentUser = ''; 
 
-    async function login() {
+    function showError(message) {
+      console.error("[ERREUR]", message);
+      const errorElement = document.getElementById('errorMessage');
+      errorElement.textContent = message;
+      errorElement.style.display = 'block';
+      setTimeout(() => {
+        errorElement.style.display = 'none';
+      }, 5000);
+    }
+
+    function showStatus(message) {
+      console.log("[INFO]", message);
+      const statusElement = document.getElementById('statusMessage');
+      statusElement.textContent = message;
+      statusElement.style.display = 'block';
+      setTimeout(() => {
+        statusElement.style.display = 'none';
+      }, 3000);
+    }   
+    function login() {
       const username = document.getElementById('username').value;
-      if (!username) return alert("Nom d'utilisateur requis");
+      if (!username) {
+        showError("Nom d'utilisateur requis");
+        return;
+      }
 
-      const res = await fetch(`${API}/login`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username })
-      });
-
-      if (res.ok) {
-        document.getElementById('login').style.display = 'none';
-        document.getElementById('app').style.display = 'block';
-        document.getElementById('currentUser').innerText = username;
-        fetchMessages();
-      } else {
-        const error = await res.json();
-        alert(error.error || 'Erreur de connexion');
+      showStatus("Connexion en cours...");
+      
+      try {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', `${API}/login`, true);
+        xhr.setRequestHeader('Content-Type', 'application/json');
+        xhr.withCredentials = true;
+        
+        xhr.onload = function() {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            document.getElementById('login').style.display = 'none';
+            document.getElementById('app').style.display = 'block';
+            document.getElementById('currentUser').innerText = username;
+            showStatus("Connecté avec succès!");
+            fetchMessages();
+            if (messageRefreshInterval) clearInterval(messageRefreshInterval);
+            messageRefreshInterval = setInterval(fetchMessages, 10000);
+            
+            localStorage.setItem('lastUsername', username);
+          } else {
+            let error = "Erreur de connexion";
+            try {
+              const response = JSON.parse(xhr.responseText);
+              error = response.error || error;
+            } catch (e) {}
+            showError(error);
+          }
+        };
+        
+        xhr.onerror = function() {
+          showError("Erreur de connexion au serveur");
+          console.error("Erreur XHR:", xhr);
+        };
+        
+        xhr.send(JSON.stringify({ username }));
+      } catch (error) {
+        console.error('Erreur lors de la connexion:', error);
+        showError('Erreur de connexion au serveur');
       }
     }
 
-    async function logout() {
-      await fetch(`${API}/logout`, { method: 'POST', credentials: 'include' });
-      document.getElementById('login').style.display = 'block';
-      document.getElementById('app').style.display = 'none';
+    function logout() {
+      showStatus("Déconnexion en cours...");
+      
+      try {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', `${API}/logout`, true);
+        xhr.withCredentials = true;
+        
+        xhr.onload = function() {
+          document.getElementById('login').style.display = 'block';
+          document.getElementById('app').style.display = 'none';
+          showStatus("Déconnecté avec succès");
+          if (messageRefreshInterval) {
+            clearInterval(messageRefreshInterval);
+            messageRefreshInterval = null;
+          }
+        };
+        
+        xhr.onerror = function() {
+          showError("Erreur de déconnexion");
+          console.error("Erreur XHR:", xhr);
+        };
+        
+        xhr.send();
+      } catch (error) {
+        console.error('Erreur lors de la déconnexion:', error);
+      }
     }
 
     async function sendMessage() {
       const text = document.getElementById('messageText').value;
-      if (!text) return alert("Message vide");
+      if (!text) {
+        showError("Message vide");
+        return;
+      }
 
-      const res = await fetch(`${API}/send_message`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text })
-      });
-
-      if (res.ok) {
-        document.getElementById('messageText').value = '';
-        fetchMessages();
-      } else {
-        const error = await res.json();
-        alert(error.error || 'Erreur envoi message');
+      showStatus("Envoi du message...");
+      
+      try {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', `${API}/send_message`, true);
+        xhr.setRequestHeader('Content-Type', 'application/json');
+        xhr.withCredentials = true;
+        
+        xhr.onload = function() {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            document.getElementById('messageText').value = '';
+            showStatus("Message envoyé!");
+            fetchMessages();
+          } else {
+            let error = "Erreur d'envoi du message";
+            try {
+              const response = JSON.parse(xhr.responseText);
+              error = response.error || error;
+            } catch (e) {}
+            showError(error);
+          }
+        };
+        
+        xhr.onerror = function() {
+          showError("Erreur d'envoi du message");
+        };
+        
+        xhr.send(JSON.stringify({ text }));
+      } catch (error) {
+        console.error('Erreur lors de l\'envoi du message:', error);
+        showError('Erreur de connexion au serveur');
+      }
+    }    function fetchMessages() {
+      try {
+        const xhr = new XMLHttpRequest();
+        xhr.open('GET', `${API}/get_messages`, true);
+        xhr.withCredentials = true;
+        
+        xhr.onload = function() {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            try {
+              const response = JSON.parse(xhr.responseText);
+              let messages;
+              
+              if (response && response.messages && Array.isArray(response.messages)) {
+                messages = response.messages;
+              } else if (Array.isArray(response)) {
+                messages = response;
+              } else {
+                console.error('Format de réponse inattendu:', response);
+                return;
+              }
+              
+              const ul = document.getElementById('messagesList');
+              ul.innerHTML = '';
+              
+              messages.forEach(msg => {
+                const li = document.createElement('li');
+                li.innerHTML = `<b>${msg.username || 'Anonyme'}</b>: ${msg.text} <i>(${new Date(msg.timestamp).toLocaleString()})</i>`;
+                ul.appendChild(li);
+              });
+            } catch (e) {
+              console.error('Erreur lors du parsing des messages:', e);
+            }
+          } else {
+            console.error('Erreur lors de la récupération des messages:', xhr.status);
+          }
+        };
+        
+        xhr.onerror = function() {
+          console.error('Erreur lors de la récupération des messages');
+        };
+        
+        xhr.send();
+      } catch (error) {
+        console.error('Erreur lors de la récupération des messages:', error);
       }
     }
 
-    async function fetchMessages() {
-      const res = await fetch(`${API}/get_messages`, { credentials: 'include' });
-      const messages = await res.json();
+    document.getElementById('messageText').addEventListener('keypress', function(e) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      }
+    });
 
-      const ul = document.getElementById('messagesList');
-      ul.innerHTML = '';
-      messages.forEach(msg => {
-        const li = document.createElement('li');
-        li.innerHTML = `<b>${msg.username}</b>: ${msg.text} <i>(${new Date(msg.timestamp).toLocaleString()})</i>`;
-        ul.appendChild(li);
-      });
-    }
 
+    document.getElementById('username').addEventListener('keypress', function(e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        login();
+      }
+    });
     fetchMessages();
   </script>
 </body>
